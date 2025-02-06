@@ -1,17 +1,18 @@
-package br.ufs.dcomp.ChatRabbitMQ;
+package br.ufs.dcomp.ExemploRabbitMQ;
 
 import com.rabbitmq.client.*;
 
-import java.io.IOException;import java.text.SimpleDateFormat;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Scanner;
 
 public class Chat {
 
-    private static final String HOST = "3.92.182.156"; 
-    private static final String USUARIO = "admin";    
-    private static final String SENHA = "password"; 
-    private static final String VIRTUAL_HOST = "/";    
+    private static final String HOST = "44.201.78.252"; // Alterar conforme necessário
+    private static final String USUARIO = "admin";    // Alterar conforme necessário
+    private static final String SENHA = "password"; // Alterar conforme necessário
+    private static final String VIRTUAL_HOST = "/";     // Alterar conforme necessário
 
     public static void main(String[] args) throws Exception {
         Scanner scanner = new Scanner(System.in);

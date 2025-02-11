@@ -1,0 +1,17 @@
+syntax = "proto3";  
+
+package br.ufs.dcomp.ChatRabbitMQ;
+
+message Mensagem {
+    string emissor = 1;
+    string data = 2;
+    string hora = 3;
+    optional string grupo = 4;
+    Conteudo conteudo = 5;
+}
+
+message Conteudo {
+    string tipo = 1;
+    bytes corpo = 2;
+    optional string nome = 3;
+}

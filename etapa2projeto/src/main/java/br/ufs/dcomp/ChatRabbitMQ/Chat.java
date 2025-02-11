@@ -4,21 +4,11 @@ import com.rabbitmq.client.*;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.Scanner;
-import java.util.concurrent.atomic.AtomicReference;
-import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass;
-import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Mensagem;
-import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Conteudo;
-import com.google.protobuf.ByteString;
-
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.rabbitmq.client.*;
-import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 
 public class Chat {

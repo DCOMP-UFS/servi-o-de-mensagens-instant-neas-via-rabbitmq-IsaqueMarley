@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Scanner;
-import java.util.concurrent.atomic.AtomicReference;
 import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass;
 import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Mensagem;
 import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Conteudo;
@@ -22,7 +21,7 @@ import java.util.Scanner;
 
 
 public class Chat {
-    private static final String HOST = "52.207.216.123";
+    private static final String HOST = "3.88.226.71";
     private static final String USUARIO = "admin";
     private static final String SENHA = "password";
     private static final String VIRTUAL_HOST = "/";
@@ -54,9 +53,9 @@ public class Chat {
                     @Override
                     public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
                         try {
-                            MensagemProto.Mensagem msg = MensagemProto.Mensagem.parseFrom(body);
+                            Mensagem msg = Mensagem.parseFrom(body);
                             String timestamp = msg.getData() + " às " + msg.getHora();
-                            System.out.println("(" + timestamp + ") " + msg.getEmissor() + (msg.hasGrupo() ? "#" + msg.getGrupo() : "") + " diz: " + msg.getConteudo().getCorpo().toStringUtf8());
+                            System.out.println("(" + timestamp + ") " + msg.getEmissor() + (msg.hasConteudo() ? "#" + msg.getGrupo() : "") + " diz: " + msg.getConteudo().getCorpo().toStringUtf8());
                         } catch (InvalidProtocolBufferException e) {
                             e.printStackTrace();
                         }
@@ -114,11 +113,11 @@ public class Chat {
                         break;
                 }
             } else if (destinatario != null) {
-                MensagemProto.Mensagem mensagem = MensagemProto.Mensagem.newBuilder()
+                Mensagem mensagem = Mensagem.newBuilder()
                         .setEmissor(nomeUsuario)
                         .setData(new SimpleDateFormat("dd/MM/yyyy").format(new Date()))
                         .setHora(new SimpleDateFormat("HH:mm").format(new Date()))
-                        .setConteudo(MensagemProto.Conteudo.newBuilder()
+                        .setConteudo(Conteudo.newBuilder()
                                 .setTipo("text/plain")
                                 .setCorpo(com.google.protobuf.ByteString.copyFromUtf8(input)))
                         .build();

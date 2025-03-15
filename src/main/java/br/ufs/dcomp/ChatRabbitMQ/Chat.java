@@ -9,6 +9,11 @@ import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Mensagem;
 import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Conteudo;
 import com.google.protobuf.ByteString;
 
+import java.util.Map;
+import java.util.List;
+import java.util.HashMap;
+import java.util.ArrayList;
+
 import java.nio.file.*;
 
 public class Chat {
@@ -17,6 +22,8 @@ public class Chat {
     private static final String SENHA = "password";
     private static final String VIRTUAL_HOST = "/";
     private static final String DOWNLOAD_DIR = System.getProperty("user.home") + "/chat/downloads/";
+    private static final String API_URL = "http://admin:password@3.88.219.240:15672/api/exchanges";
+
 
     
     private static String currentTarget = null;
@@ -25,6 +32,9 @@ public class Chat {
     private static String nomeUsuario;
     private static Connection connection;
     private static Channel channel;
+    private static Map<String, List<String>> groupUsers = new HashMap<>();  // Para armazenar usuários por grupo
+
+    
 
     public static void main(String[] args) throws Exception {
         Scanner scanner = new Scanner(System.in);
@@ -114,8 +124,26 @@ public class Chat {
                     
                     //System.out.println("Grupo '" + cmd[1] + "' criado!");
                     break;
-                    
+                
+                
                 case "!addUser":
+                    try (Channel tempChannel = connection.createChannel()) {
+                        channel.queueDeclare(cmd[1], false, false, false, null);
+                        channel.queueDeclare(cmd[1] + "_files", false, false, false, null);
+                        tempChannel.exchangeDeclarePassive(cmd[2]);
+                        channel.queueBind(cmd[1], cmd[2], "");
+                
+                        // Adiciona o usuário ao grupo no mapa
+                        groupUsers.computeIfAbsent(cmd[2], k -> new ArrayList<>()).add(cmd[1]);
+                
+                       // System.out.println("Usuário '" + cmd[1] + "' adicionado ao grupo '" + cmd[2] + "'!");
+                    } catch (IOException e) {
+                        System.out.println("Fila '" + cmd[1] + "' não encontrada. Destinatário pode estar offline.");
+                        return;
+                    }
+                    break;
+    
+              /*  case "!addUser":
                     try (Channel tempChannel = connection.createChannel()) {
                          channel.queueDeclare(cmd[1], false, false, false, null);
                          channel.queueDeclare(cmd[1] + "_files", false, false, false, null);
@@ -127,7 +155,7 @@ public class Chat {
                         System.out.println("Fila '" + cmd[1] + "' não encontrada. Destinatário pode estar offline.");
                         return;
                     }
-                    break;
+                    break;*/
                     
                 case "!delFromGroup":
                     channel.queueUnbind(cmd[1], cmd[2], "");
@@ -138,6 +166,20 @@ public class Chat {
                     channel.exchangeDelete(cmd[1]);
                     System.out.println("Grupo '" + cmd[1] + "' removido!");
                     break;
+                    
+                case "!listUsers":
+                    if (cmd.length > 1) {
+                        String groupName = cmd[1].trim();
+                        listUsers(groupName);
+                    } else {
+                        System.out.println("Você deve fornecer o nome de um grupo para listar os usuários!");
+                    }
+                    break;
+                case "!listGroups":
+                    listGroups();
+                    break;
+
+                    
                     
                 default: System.out.println("Comando inválido!");
             }
@@ -359,4 +401,58 @@ Path filePath = Paths.get(DOWNLOAD_DIR, fileName);
     }
 }
 
+
+private static void listUsers(String groupName) {
+    if (groupUsers.containsKey(groupName)) {
+        List<String> users = groupUsers.get(groupName);
+        System.out.println(String.join(", ", users));
+    } else {
+        System.out.println("Grupo '" + groupName + "' não encontrado!");
+    }
 }
+
+
+private static void listGroups() {
+    try {
+        // Faz a requisição para listar todas as exchanges
+        String url = API_URL + "/exchanges";
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString((USUARIO + ":" + SENHA).getBytes()));
+
+        // Lê a resposta
+        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+        String line;
+        StringBuilder response = new StringBuilder();
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+
+        // Converte a resposta em JSON e filtra grupos
+        JSONArray exchanges = new JSONArray(response.toString());
+        List<String> groups = new ArrayList<>();
+        for (int i = 0; i < exchanges.length(); i++) {
+            JSONObject exchange = exchanges.getJSONObject(i);
+            String name = exchange.getString("name");
+
+            // Supondo que grupos tenham um nome específico, como prefixo "#"
+            if (name.startsWith("#")) {
+                groups.add(name.substring(1));  // Remover o prefixo "#" para exibição
+            }
+        }
+
+        // Exibe a lista de grupos
+        if (groups.isEmpty()) {
+            System.out.println("Nenhum grupo encontrado.");
+        } else {
+            System.out.println("Grupos disponíveis: " + String.join(", ", groups));
+        }
+    } catch (Exception e) {
+        System.out.println("Erro ao listar grupos: " + e.getMessage());
+    }
+}
+
+
+
+}//chave da classe

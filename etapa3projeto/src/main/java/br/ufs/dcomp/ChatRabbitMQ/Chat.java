@@ -1,148 +1,284 @@
 package br.ufs.dcomp.ChatRabbitMQ;
-
-import com.rabbitmq.client.*;
 import java.io.*;
-import java.nio.file.*;
+import com.rabbitmq.client.*;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
-import java.util.*;
-import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.*;
+import java.util.Date;
+import java.util.Scanner;
+import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Mensagem;
+import br.ufs.dcomp.ChatRabbitMQ.MensagemOuterClass.Conteudo;
 import com.google.protobuf.ByteString;
-import com.google.protobuf.InvalidProtocolBufferException;
+
+import java.nio.file.*;
 
 public class Chat {
-    private static final String HOST = "3.88.226.71";
+    private static final String HOST = "3.80.138.143";
     private static final String USUARIO = "admin";
     private static final String SENHA = "password";
     private static final String VIRTUAL_HOST = "/";
     private static final String DOWNLOAD_DIR = System.getProperty("user.home") + "/chat/downloads/";
 
-    private static final Map<String, String> grupos = new HashMap<>();
+    
+    private static String currentTarget = null;
+    private static boolean isGroup = false;
+    private static String prompt = ">> ";
+    private static String nomeUsuario;
+    private static Connection connection;
+    private static Channel channel;
 
     public static void main(String[] args) throws Exception {
         Scanner scanner = new Scanner(System.in);
+        
         System.out.print("user: ");
-        String nomeUsuario = scanner.nextLine().trim();
+        nomeUsuario = scanner.nextLine().trim();
 
         ConnectionFactory factory = new ConnectionFactory();
         factory.setHost(HOST);
         factory.setUsername(USUARIO);
         factory.setPassword(SENHA);
         factory.setVirtualHost(VIRTUAL_HOST);
-        Connection connection = factory.newConnection();
-        Channel channel = connection.createChannel();
-
+        
+        connection = factory.newConnection();
+        channel = connection.createChannel();
+        
+        
         channel.queueDeclare(nomeUsuario, false, false, false, null);
         channel.queueDeclare(nomeUsuario + "_files", false, false, false, null);
-        System.out.println("Filas criadas para: " + nomeUsuario);
+        System.out.println("Fila criada para: " + nomeUsuario);
 
-        // Thread para receber mensagens de texto
-        new Thread(() -> receiveMessages(channel, nomeUsuario)).start();
+        new Thread(() -> receiveMessages()).start();
+        new Thread(() -> receiveFiles()).start();
         
-        // Thread para receber arquivos
-        new Thread(() -> receiveFiles(channel, nomeUsuario)).start();
-        
-        String destinatario = null;
-        String prompt = ">> ";
-
-        while (true) {
+        while(true) {
             System.out.print(prompt);
             String input = scanner.nextLine().trim();
-
-            if (input.startsWith("@")) {
-                destinatario = input.substring(1).trim();
-                channel.queueDeclare(destinatario, false, false, false, null);
-                prompt = "@" + destinatario + ">> ";
-            } else if (input.startsWith("!upload")) {
-                if (destinatario == null) {
-                    System.out.println("Escolha um destinatário antes de enviar um arquivo.");
-                    continue;
-                }
-                String caminhoArquivo = input.split(" ", 2)[1];
-                sendFile(channel, nomeUsuario, destinatario, caminhoArquivo);
-            } else {
-                sendMessage(channel, nomeUsuario, destinatario, input);
-            }
+            
+            if(input.isEmpty()) continue;
+            
+            if(input.startsWith("@")) handleUser(input);
+            else if(input.startsWith("#")) handleGroup(input);
+            else if(input.startsWith("!")) handleCommand(input);
+            else sendMessage(input);
         }
     }
 
-    private static void sendMessage(Channel channel, String emissor, String destinatario, String texto) throws IOException {
-        Mensagem mensagem = Mensagem.newBuilder()
-                .setEmissor(emissor)
-                .setData(new SimpleDateFormat("dd/MM/yyyy").format(new Date()))
-                .setHora(new SimpleDateFormat("HH:mm").format(new Date()))
-                .setConteudo(Conteudo.newBuilder()
-                        .setTipo("text/plain")
-                        .setCorpo(ByteString.copyFromUtf8(texto)))
-                .build();
-        channel.basicPublish("", destinatario, null, mensagem.toByteArray());
+    private static void handleUser(String input) {
+        currentTarget = input.substring(1).trim();
+        try {
+            // Usa canal temporário para verificação
+            Channel tempChannel = connection.createChannel();
+            try {
+                tempChannel.queueDeclarePassive(currentTarget);
+                isGroup = false;
+                prompt = "@" + currentTarget + ">> ";
+            } finally {
+                if (tempChannel.isOpen()) tempChannel.close();
+            }
+        } catch (Exception e) {
+            System.out.println("Usuário '" + currentTarget + "' não encontrado! Abra outro terminal e crie o usuário "+ currentTarget);
+            currentTarget = null;
+        }
     }
 
-    private static void sendFile(Channel channel, String emissor, String destinatario, String caminhoArquivo) {
+    private static void handleGroup(String input) {
+        currentTarget = input.substring(1).trim();
+        try {
+            // Usa canal temporário para verificação
+            Channel tempChannel = connection.createChannel();
+            try {
+                tempChannel.exchangeDeclarePassive(currentTarget);
+                isGroup = true;
+                prompt = "#" + currentTarget + ">> ";
+            } finally {
+                if (tempChannel.isOpen()) tempChannel.close();
+            }
+        } catch (Exception e) {
+            System.out.println("Grupo '" + currentTarget + "' não existe! Use !addGroup para criá-lo.");
+            currentTarget = null;
+        }
+    }
+
+    private static void handleCommand(String input) {
+        String[] cmd = input.split(" ", 3);
+        try {
+            switch(cmd[0]) {
+                case "!upload":
+                    if(cmd[0].equals("!upload") && cmd.length > 1) {
+                        sendFile(cmd[1]);
+                    } else {
+                        System.out.println("Há informações demais!");
+                    }
+                case "!addGroup":
+                    channel.exchangeDeclare(cmd[1], "fanout");
+                    channel.queueBind(nomeUsuario, cmd[1], "");
+                    System.out.println("Grupo '" + cmd[1] + "' criado!");
+                    break;
+                    
+                case "!addUser":
+                    try (Channel tempChannel = connection.createChannel()) {
+                        tempChannel.exchangeDeclarePassive(cmd[2]);
+                        channel.queueBind(cmd[1], cmd[2], "");
+                        System.out.println("Usuário '" + cmd[1] + "' adicionado ao grupo!");
+                    }
+                    break;
+                    
+                case "!delFromGroup":
+                    channel.queueUnbind(cmd[1], cmd[2], "");
+                    System.out.println("Usuário '" + cmd[1] + "' removido do grupo!");
+                    break;
+                    
+                case "!removeGroup":
+                    channel.exchangeDelete(cmd[1]);
+                    System.out.println("Grupo '" + cmd[1] + "' removido!");
+                    break;
+                    
+                default: System.out.println("Comando inválido!");
+            }
+        } catch(Exception e) {
+            System.out.println("Erro: " + e.getMessage());
+        }
+    }
+
+private static void sendFile(String filePath) {
+        if (currentTarget == null) {
+            System.out.println("Selecione um destinatário primeiro!");
+            return;
+        }
+        
+        File file = new File(filePath);
+        if (!file.exists()) {
+            System.out.println("Arquivo não encontrado!");
+            return;
+        }
+        
         new Thread(() -> {
             try {
-                Path path = Paths.get(caminhoArquivo);
-                byte[] conteudoArquivo = Files.readAllBytes(path);
-                String tipoMime = Files.probeContentType(path);
-                String nomeArquivo = path.getFileName().toString();
-                
-                System.out.println("Enviando \"" + nomeArquivo + "\" para " + destinatario);
-                
+                System.out.println("Enviando \"" + filePath + "\" para " + (isGroup ? "#" : "@") + currentTarget);
+                Path path = file.toPath();
+                String mimeType = Files.probeContentType(path);
+                byte[] fileBytes = Files.readAllBytes(path);
+
                 Mensagem mensagem = Mensagem.newBuilder()
-                        .setEmissor(emissor)
-                        .setData(new SimpleDateFormat("dd/MM/yyyy").format(new Date()))
-                        .setHora(new SimpleDateFormat("HH:mm").format(new Date()))
-                        .setConteudo(Conteudo.newBuilder()
-                                .setTipo(tipoMime)
-                                .setNome(nomeArquivo)
-                                .setCorpo(ByteString.copyFrom(conteudoArquivo)))
-                        .build();
-                
-                channel.basicPublish("", destinatario + "_files", null, mensagem.toByteArray());
-                System.out.println("Arquivo \"" + nomeArquivo + "\" foi enviado para @" + destinatario + "!");
-            } catch (IOException e) {
-                System.err.println("Erro ao enviar arquivo: " + e.getMessage());
+                    .setEmissor(nomeUsuario)
+                    .setData(new SimpleDateFormat("dd/MM/yyyy").format(new Date()))
+                    .setHora(new SimpleDateFormat("HH:mm").format(new Date()))
+                    .setConteudo(Conteudo.newBuilder()
+                        .setTipo(mimeType)
+                        .setCorpo(ByteString.copyFrom(fileBytes)))
+                    .setGrupo(isGroup ? currentTarget : "")
+                    .build();
+
+                channel.basicPublish("", currentTarget + "_files", null, mensagem.toByteArray());
+                System.out.println("Arquivo \"" + filePath + "\" foi enviado para " + (isGroup ? "#" : "@") + currentTarget + "!");
+            } catch (Exception e) {
+                System.out.println("Erro ao enviar arquivo: " + e.getMessage());
             }
         }).start();
     }
+    private static void sendMessage(String texto) {
+    // Verifica se um destinatário foi selecionado
+    if (currentTarget == null) {
+        System.out.println("Selecione um destinatário primeiro!");
+        return;
+    }
+    
+    try {
+        // Constrói a mensagem
+        Mensagem.Builder builder = Mensagem.newBuilder()
+            .setEmissor(nomeUsuario)  // Define o emissor
+            .setData(new SimpleDateFormat("dd/MM/yyyy").format(new Date()))  // Define a data
+            .setHora(new SimpleDateFormat("HH:mm").format(new Date()))  // Define a hora
+            .setConteudo(Conteudo.newBuilder()
+                .setTipo("text/plain")  // Define o tipo de conteúdo
+                .setCorpo(ByteString.copyFromUtf8(texto)));  // Define o corpo da mensagem
 
-    private static void receiveMessages(Channel channel, String usuario) {
+        // Adiciona o grupo apenas se a mensagem for para um grupo
+        if (isGroup) {
+            builder.setGrupo(currentTarget);  // Define o grupo
+        } else {
+            builder.setGrupo("");  // Define o grupo como vazio para mensagens diretas
+        }
+
+        // Constrói a mensagem final
+        Mensagem mensagem = builder.build();
+
+        // Publica a mensagem no RabbitMQ
+        if (isGroup) {
+            // Envia para um grupo (exchange)
+            channel.basicPublish(currentTarget, "", null, mensagem.toByteArray());
+        } else {
+            // Envia para um usuário (fila)
+            channel.basicPublish("", currentTarget, null, mensagem.toByteArray());
+        }
+    } catch (Exception e) {
+        System.out.println("Erro ao enviar: " + e.getMessage());
+    }
+}
+
+private static void receiveFiles() {
         try {
+            File downloadDir = new File(DOWNLOAD_DIR);
+            if (!downloadDir.exists()) downloadDir.mkdirs();
+            
             Consumer consumer = new DefaultConsumer(channel) {
                 @Override
-                public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
-                    try {
-                        Mensagem msg = Mensagem.parseFrom(body);
-                        System.out.println("(" + msg.getData() + " às " + msg.getHora() + ") " + msg.getEmissor() + " diz: " + msg.getConteudo().getCorpo().toStringUtf8());
-                    } catch (InvalidProtocolBufferException e) {
-                        e.printStackTrace();
-                    }
+                public void handleDelivery(String tag, Envelope envelope, 
+                        AMQP.BasicProperties props, byte[] body) throws IOException {
+                    
+                    Mensagem msg = Mensagem.parseFrom(body);
+                    if (msg.getEmissor().equals(nomeUsuario)) return;
+                    
+                    String fileName = "ArQuIvO" ;
+                    Path filePath = Paths.get(DOWNLOAD_DIR, fileName);
+                    Files.write(filePath, msg.getConteudo().getCorpo().toByteArray());
+                    
+                    System.out.printf("\n(%s às %s) Arquivo \"%s\" recebido de @%s!%n", 
+                        msg.getData(), msg.getHora(), fileName, msg.getEmissor());
+                    System.out.print(prompt);
                 }
             };
-            channel.basicConsume(usuario, true, consumer);
+            
+            channel.basicConsume(nomeUsuario + "_files", true, consumer);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private static void receiveFiles(Channel channel, String usuario) {
-        try {
-            Files.createDirectories(Paths.get(DOWNLOAD_DIR));
-            Consumer consumer = new DefaultConsumer(channel) {
-                @Override
-                public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
-                    try {
-                        Mensagem msg = Mensagem.parseFrom(body);
-                        String caminhoArquivo = DOWNLOAD_DIR + msg.getConteudo().getNome();
-                        Files.write(Paths.get(caminhoArquivo), msg.getConteudo().getCorpo().toByteArray());
-                        System.out.println("(" + msg.getData() + " às " + msg.getHora() + ") Arquivo \"" + msg.getConteudo().getNome() + "\" recebido de @" + msg.getEmissor() + "!");
-                    } catch (InvalidProtocolBufferException e) {
-                        e.printStackTrace();
-                    }
-                }
-            };
-            channel.basicConsume(usuario + "_files", true, consumer);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+
+   private static void receiveMessages() {
+    try {
+        Consumer consumer = new DefaultConsumer(channel) {
+            @Override
+            public void handleDelivery(String tag, Envelope envelope, 
+                    AMQP.BasicProperties props, byte[] body) throws IOException {
+                
+                // Desserializa a mensagem
+                Mensagem msg = Mensagem.parseFrom(body);
+
+                // Ignora mensagens enviadas pelo próprio usuário
+                if (msg.getEmissor().equals(nomeUsuario)) return;
+                
+                // Verifica se a mensagem foi enviada para um grupo
+                String grupo = msg.getGrupo().isEmpty() ? "" : "#" + msg.getGrupo();
+
+                // Formata e exibe a mensagem
+                System.out.printf("%n(%s às %s) %s%s diz: %s%n",
+                    msg.getData(),
+                    msg.getHora(),
+                    msg.getEmissor(),
+                    grupo,  // Exibe o grupo apenas se a mensagem for para um grupo
+                    msg.getConteudo().getCorpo().toStringUtf8());
+                
+                // Exibe o prompt novamente
+                System.out.print(prompt);
+            }
+        };
+
+        // Inicia o consumo de mensagens da fila do usuário
+        channel.basicConsume(nomeUsuario, true, consumer);
+    } catch (Exception e) {
+        e.printStackTrace();
     }
+}
+
 }

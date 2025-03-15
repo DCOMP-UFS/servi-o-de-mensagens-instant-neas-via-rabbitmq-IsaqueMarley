@@ -12,7 +12,7 @@ import com.google.protobuf.ByteString;
 import java.nio.file.*;
 
 public class Chat {
-    private static final String HOST = "3.80.138.143";
+    private static final String HOST = "3.88.219.240";
     private static final String USUARIO = "admin";
     private static final String SENHA = "password";
     private static final String VIRTUAL_HOST = "/";
@@ -44,7 +44,7 @@ public class Chat {
         
         channel.queueDeclare(nomeUsuario, false, false, false, null);
         channel.queueDeclare(nomeUsuario + "_files", false, false, false, null);
-        System.out.println("Fila criada para: " + nomeUsuario);
+       // System.out.println("Fila criada para: " + nomeUsuario);
 
         new Thread(() -> receiveMessages()).start();
         new Thread(() -> receiveFiles()).start();
@@ -111,14 +111,21 @@ public class Chat {
                 case "!addGroup":
                     channel.exchangeDeclare(cmd[1], "fanout");
                     channel.queueBind(nomeUsuario, cmd[1], "");
-                    System.out.println("Grupo '" + cmd[1] + "' criado!");
+                    
+                    //System.out.println("Grupo '" + cmd[1] + "' criado!");
                     break;
                     
                 case "!addUser":
                     try (Channel tempChannel = connection.createChannel()) {
+                         channel.queueDeclare(cmd[1], false, false, false, null);
+                         channel.queueDeclare(cmd[1] + "_files", false, false, false, null);
                         tempChannel.exchangeDeclarePassive(cmd[2]);
                         channel.queueBind(cmd[1], cmd[2], "");
-                        System.out.println("Usuário '" + cmd[1] + "' adicionado ao grupo!");
+                        
+                       // System.out.println("Usuário '" + cmd[1] + "' adicionado ao grupo!");
+                    }catch (IOException e) {
+                        System.out.println("Fila '" + cmd[1] + "' não encontrada. Destinatário pode estar offline.");
+                        return;
                     }
                     break;
                     
@@ -135,21 +142,29 @@ public class Chat {
                 default: System.out.println("Comando inválido!");
             }
         } catch(Exception e) {
+            System.out.println("Há algum erro no seu comando. Caso discorde contate o SUPORTE!");
             System.out.println("Erro: " + e.getMessage());
+            System.out.println("O erro é este que foi escrito!");
         }
     }
 
 private static void sendFile(String filePath) {
+        File file = new File(filePath);
+        if (!file.exists()) {
+        System.out.println("Arquivo não encontrado!");
+        return;
+        }
+        
+        if (!Files.isRegularFile(file.toPath())) {
+        System.out.println("O caminho especificado não é um arquivo!");
+        return;
+        }
+
         if (currentTarget == null) {
             System.out.println("Selecione um destinatário primeiro!");
             return;
         }
         
-        File file = new File(filePath);
-        if (!file.exists()) {
-            System.out.println("Arquivo não encontrado!");
-            return;
-        }
         
         new Thread(() -> {
             try {
@@ -164,12 +179,25 @@ private static void sendFile(String filePath) {
                     .setHora(new SimpleDateFormat("HH:mm").format(new Date()))
                     .setConteudo(Conteudo.newBuilder()
                         .setTipo(mimeType)
+                        .setNome(file.getName())  // Nome do arquivo
                         .setCorpo(ByteString.copyFrom(fileBytes)))
                     .setGrupo(isGroup ? currentTarget : "")
                     .build();
 
+                /*Mensagem mensagem = Mensagem.newBuilder()
+                    .setEmissor(nomeUsuario)
+                    .setData(new SimpleDateFormat("dd/MM/yyyy").format(new Date()))
+                    .setHora(new SimpleDateFormat("HH:mm").format(new Date()))
+                    .setConteudo(Conteudo.newBuilder()
+                        .setTipo(mimeType)
+                        .setCorpo(ByteString.copyFrom(fileBytes)))
+                    .setGrupo(isGroup ? currentTarget : "")
+                    .build();*/
+
                 channel.basicPublish("", currentTarget + "_files", null, mensagem.toByteArray());
                 System.out.println("Arquivo \"" + filePath + "\" foi enviado para " + (isGroup ? "#" : "@") + currentTarget + "!");
+                
+                System.out.println("...");
             } catch (Exception e) {
                 System.out.println("Erro ao enviar arquivo: " + e.getMessage());
             }
@@ -214,9 +242,58 @@ private static void sendFile(String filePath) {
         System.out.println("Erro ao enviar: " + e.getMessage());
     }
 }
+private static void receiveFiles() {
+    try {
+        // Verifica se o diretório de downloads existe, caso contrário, tenta criá-lo
+        File downloadDir = new File(DOWNLOAD_DIR);
+        if (!downloadDir.exists()) {
+            if (downloadDir.mkdirs()) {
+                System.out.println("Diretório de downloads criado: " + DOWNLOAD_DIR);
+            } else {
+                System.out.println("Erro ao criar o diretório de downloads: " + DOWNLOAD_DIR);
+                return;
+            }
+        }
+
+        Consumer consumer = new DefaultConsumer(channel) {
+            @Override
+            public void handleDelivery(String tag, Envelope envelope, 
+                    AMQP.BasicProperties props, byte[] body) throws IOException {
+                
+                Mensagem msg = Mensagem.parseFrom(body);
+                if (msg.getEmissor().equals(nomeUsuario)) return;
+
+                String fileName = msg.getConteudo().getNome();
+                Path filePath = Paths.get(DOWNLOAD_DIR, fileName);
+
+                // Tenta escrever o arquivo na pasta de downloads
+                try {
+                    Files.write(filePath, msg.getConteudo().getCorpo().toByteArray());
+                    System.out.printf("\n(%s às %s) Arquivo \"%s\" recebido de @%s!%n", 
+                            msg.getData(), msg.getHora(), fileName, msg.getEmissor());
+                } catch (IOException e) {
+                    System.out.println("Erro ao salvar o arquivo " + fileName + ": " + e.getMessage());
+                }
+
+                // Exibe o prompt novamente
+                System.out.print(prompt);
+            }
+        };
+
+        // Inicia o consumo de arquivos da fila do usuário
+        channel.basicConsume(nomeUsuario + "_files", true, consumer);
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+/*
 
 private static void receiveFiles() {
         try {
+     
+
+
             File downloadDir = new File(DOWNLOAD_DIR);
             if (!downloadDir.exists()) downloadDir.mkdirs();
             
@@ -228,8 +305,9 @@ private static void receiveFiles() {
                     Mensagem msg = Mensagem.parseFrom(body);
                     if (msg.getEmissor().equals(nomeUsuario)) return;
                     
-                    String fileName = "ArQuIvO" ;
-                    Path filePath = Paths.get(DOWNLOAD_DIR, fileName);
+                   String fileName = msg.getConteudo().getNome();
+Path filePath = Paths.get(DOWNLOAD_DIR, fileName);
+
                     Files.write(filePath, msg.getConteudo().getCorpo().toByteArray());
                     
                     System.out.printf("\n(%s às %s) Arquivo \"%s\" recebido de @%s!%n", 
@@ -243,7 +321,7 @@ private static void receiveFiles() {
             e.printStackTrace();
         }
     }
-
+*/
 
    private static void receiveMessages() {
     try {
